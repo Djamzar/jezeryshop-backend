@@ -1,14 +1,7 @@
-import nodemailer from "nodemailer";
-
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: Number(process.env.SMTP_PORT) || 587,
-  secure: false,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASSWORD,
-  },
-});
+// Envoi via l'API HTTP de Brevo (HTTPS, port 443) plutôt que via SMTP
+// classique. De nombreux hébergeurs (Railway, Render, Heroku...) bloquent
+// les connexions SMTP sortantes par mesure anti-spam ; l'API HTTP contourne
+// ce blocage puisqu'elle passe par le même protocole qu'un site web normal.
 
 export async function sendReservationNotification(reservation) {
   const { orderNumber, quantity, total, client } = reservation;
@@ -28,15 +21,26 @@ export async function sendReservationNotification(reservation) {
   `;
 
   try {
-    await transporter.sendMail({
-      from: process.env.FROM_EMAIL,
-      to: process.env.NOTIFY_EMAIL,
-      subject: `Nouvelle réservation Jezeryshop — ${orderNumber}`,
-      html,
+    const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "api-key": process.env.BREVO_API_KEY,
+      },
+      body: JSON.stringify({
+        sender: { name: "Jezeryshop", email: process.env.FROM_EMAIL_ADDRESS },
+        to: [{ email: process.env.NOTIFY_EMAIL }],
+        subject: `Nouvelle réservation Jezeryshop — ${orderNumber}`,
+        htmlContent: html,
+      }),
     });
+
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`Brevo API a répondu ${res.status} : ${body}`);
+    }
   } catch (err) {
-    // On ne bloque jamais la réservation si l'e-mail échoue :
-    // la commande est déjà enregistrée en base, c'est le plus important.
     console.error("Échec de l'envoi de la notification e-mail :", err.message);
   }
 }
